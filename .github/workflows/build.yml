@@ -11,26 +11,20 @@ permissions:
   contents: write
 
 jobs:
-  build-and-push:
+  build:
     strategy:
       matrix:
         platform: [linux/amd64, linux/arm64]
     runs-on: ${{ contains(matrix.platform, 'arm64') && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
+      - name: Prepare
+        run: |
+          platform=${{ matrix.platform }}
+          echo "ANKI_VERSION=$(curl -s https://api.github.com/repos/ankitects/anki/releases/latest | jq -r .tag_name)" >> $GITHUB_ENV
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+
       - name: Checkout current repository
         uses: actions/checkout@v4
-
-      - name: Get latest release tag
-        id: latest_release
-        run: |
-          echo "ANKI_VERSION=$(curl -s https://api.github.com/repos/ankitects/anki/releases/latest | jq -r .tag_name)" >> $GITHUB_ENV
-
-      - name: Checkout anki repository
-        uses: actions/checkout@v4
-        with:
-          repository: ankitects/anki
-          ref: main
-          path: anki
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -42,26 +36,83 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and Push Docker image
+      - name: Checkout current repository
+        uses: actions/checkout@v4
+
+      - name: Checkout anki repository
+        uses: actions/checkout@v4
+        with:
+          repository: ankitects/anki
+          ref: main
+          path: anki
+
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v6
         with:
-          context: ./anki/docs/syncserver
-          push: true
           build-args: |
             ANKI_VERSION=${{ env.ANKI_VERSION }}
-          tags: ghcr.io/mt190502/docker-anki-sync-server:${{ env.ANKI_VERSION }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          context: ./anki/docs/syncserver
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
           platforms: ${{ matrix.platform }}
+          tags: ghcr.io/mt190502/docker-anki-sync-server:${{ env.ANKI_VERSION }}
 
-      - name: Create and push tag and release
-        if: matrix.platform == 'linux/amd64'
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Export digest
         run: |
-          echo "Creating tag and release for version ${{ env.ANKI_VERSION }}"
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git tag ${{ env.ANKI_VERSION }} || true
-          git push origin ${{ env.ANKI_VERSION }} || true
-          gh release create ${{ env.ANKI_VERSION }} --generate-notes || true
+          mkdir -p ${{ runner.temp }}/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+  merge:
+    runs-on: ubuntu-latest
+    needs:
+      - build
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/mt190502/docker-anki-sync-server
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}.{{minor}}.{{patch}}
+
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'ghcr.io/mt190502/docker-anki-sync-server@sha256:%s ' *)
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ghcr.io/mt190502/docker-anki-sync-server:${{ steps.meta.outputs.version }}
