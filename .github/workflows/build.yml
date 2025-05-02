@@ -61,7 +61,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
           platforms: ${{ matrix.platform }}
-          tags: mt190502/docker-anki-sync-server
+          tags: ghcr.io/mt190502/docker-anki-sync-server
 
       - name: Export digest
         run: |
@@ -102,7 +102,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: mt190502/docker-anki-sync-server
+          images: ghcr.io/mt190502/docker-anki-sync-server
           tags: |
             type=ref,event=branch
             type=ref,event=pr
@@ -113,11 +113,6 @@ jobs:
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests
         run: |
-          tag="mt190502/docker-anki-sync-server:${{ needs.build.outputs.anki_version }}"
+          tag="ghcr.io/mt190502/docker-anki-sync-server:${{ needs.build.outputs.anki_version }}"
           docker buildx imagetools create -t "${tag}" \
-            $(printf 'mt190502/docker-anki-sync-server@sha256:%s ' *)
-
-      - name: Inspect image
-        run: |
-          tag="mt190502/docker-anki-sync-server:${{ needs.build.outputs.anki_version }}"
-          docker buildx imagetools inspect "${tag}"
+            $(printf 'ghcr.io/mt190502/docker-anki-sync-server@sha256:%s ' *)
