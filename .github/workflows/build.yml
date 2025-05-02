@@ -16,11 +16,16 @@ jobs:
       matrix:
         platform: [linux/amd64, linux/arm64]
     runs-on: ${{ contains(matrix.platform, 'arm64') && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    outputs:
+      anki_version: ${{ steps.prepare.outputs.ANKI_VERSION }}
     steps:
       - name: Prepare
+        id: prepare
         run: |
           platform=${{ matrix.platform }}
-          echo "ANKI_VERSION=$(curl -s https://api.github.com/repos/ankitects/anki/releases/latest | jq -r .tag_name)" >> $GITHUB_ENV
+          anki_version=$(curl -s https://api.github.com/repos/ankitects/anki/releases/latest | jq -r .tag_name)
+          echo "ANKI_VERSION=${anki_version}" >> $GITHUB_ENV
+          echo "ANKI_VERSION=${anki_version}" >> $GITHUB_OUTPUT
           echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
 
       - name: Checkout current repository
@@ -36,8 +41,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Checkout current repository
-        uses: actions/checkout@v4
 
       - name: Checkout anki repository
         uses: actions/checkout@v4
@@ -110,9 +113,11 @@ jobs:
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests
         run: |
-          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+          tag="ghcr.io/mt190502/docker-anki-sync-server:${{ needs.build.outputs.anki_version }}"
+          docker buildx imagetools create -t "${tag}" \
             $(printf 'ghcr.io/mt190502/docker-anki-sync-server@sha256:%s ' *)
 
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect ghcr.io/mt190502/docker-anki-sync-server:${{ steps.meta.outputs.version }}
+          tag="ghcr.io/mt190502/docker-anki-sync-server:${{ needs.build.outputs.anki_version }}"
+          docker buildx imagetools inspect "${tag}"
