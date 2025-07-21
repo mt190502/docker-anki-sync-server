@@ -53,7 +53,7 @@ jobs:
       PLATFORM_PAIR:
     needs: 
       - check_image
-    if: ${{ needs.check_image.outputs.skip_build == 'false' && needs.check_image.outputs.anki_version == 'null' }}
+    if: ${{ needs.check_image.outputs.skip_build == 'false' && needs.check_image.outputs.anki_version != 'null' }}
     strategy:
       matrix:
         platform: 
